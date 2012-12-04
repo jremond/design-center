@@ -1,0 +1,43 @@
+body common control {
+
+    bundlesequence => {"cfsketch_run"};
+
+    inputs => { "../../libraries/copbl/cfengine_stdlib.cf", "main.cf" };
+}
+
+bundle common cfsketch_g
+{
+  classes:
+      "tcpwrappers_test_empty_first" expression => "!any";
+      "tcpwrappers_test_ensure_absent" expression => "!any";
+      "tcpwrappers_test_debug" expression => "!any";
+      "tcpwrappers_test_test" expression => "!any";
+      "tcpwrappers_test_verbose" expression => "!any";
+
+  vars:
+     !test::
+       "tcpwrappers_test_allow_filename" string => "/etc/hosts.allow";
+     test::
+       "tcpwrappers_test_allow_filename" string => "/tmp/hosts.allow";
+     !test::
+       "tcpwrappers_test_deny_filename" string => "/etc/hosts.deny";
+     test::
+       "tcpwrappers_test_deny_filename" string => "/tmp/hosts.deny";
+
+     any::
+       "tcpwrappers_test_allow[sshd][clients]" slist => { "ALL" };
+       "tcpwrappers_test_allow[sshd][daemons]" slist => { "sshd", "sshd1" };
+       "tcpwrappers_test_deny[default][clients]" slist => { "ALL" };
+       "tcpwrappers_test_deny[default][daemons]" slist => { "ALL" };
+}
+
+bundle agent cfsketch_run
+{
+  methods:
+      "cfsketch_g" usebundle => "cfsketch_g";
+      "tcpwrappers test" usebundle => cfdc_tcpwrappers:tcpwrappers("tcpwrappers_test_",
+                                                                   $(cfsketch_g.tcpwrappers_test_allow_filename),
+                                                                   $(cfsketch_g.tcpwrappers_test_deny_filename),
+                                                                   "cfsketch_g.tcpwrappers_test_allow",
+                                                                   "cfsketch_g.tcpwrappers_test_deny");
+}

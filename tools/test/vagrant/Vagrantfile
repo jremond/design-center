@@ -1,0 +1,204 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+require './cfengine_provisioner.rb'
+
+require 'optparse'
+require 'pp'
+
+dchome = "/var/cfengine/dc"
+
+ours = []
+
+while ARGV.include? '--'
+  ours << ARGV.pop
+end
+
+options= {
+  :installer => :core,
+  :box => :precise32,
+  :url => 'http://files.vagrantup.com/',
+  :dcurl => 'https://github.com/cfengine/design-center.git',
+  :dcbranch => 'master',
+  :dcinstall => false,
+  :dctest => false,
+  :provision_hub => false,
+  :provision_client => false,
+  :ip => "10.1.1.12",
+}
+
+OptionParser.new do |op|
+  op.banner = <<EOHIPPUS
+Syntax: vagrant [vagrant options] -- OPTIONS [SKETCH1,SKETCH2,...]
+
+Note that options can be abbreviated, e.g. -iapt can be -ia
+
+Example: install from APT and test the ssh and limits DC sketches
+  vagrant up cftester -- -ia ssh limits
+
+EOHIPPUS
+
+  op.on("-i[INSTALLER]", "--installer=[INSTALLER]",
+        [:none, :core, :apt, :v334, :nova, :enterprise],
+        "Installation method for CFEngine (none, core, apt, v334, nova, enterprise)") do |v|
+    options[:installer] = v
+  end
+
+  op.on("-b[BOX]", "--box=[BOX]",
+        [:precise32, :lucid32, :centos],
+        "Box to use (precise32, lucid32, centos)") do |v|
+    options[:installer] = v
+  end
+
+  op.on("--dcurl=[URL]",
+        "Design Center URL to check out with Git") do |v|
+    options[:dcurl] = v
+  end
+
+  op.on("--dcbranch=[BRANCH]",
+        "Design Center branch to check out with Git") do |v|
+    options[:dcbranch] = v
+  end
+
+  op.on("-u[URL]", "--base-url=[URL]",
+        "Base URL to use to get the box") do |v|
+    options[:url] = v
+  end
+
+  op.on("-I[IP]", "--ip=[IP]",
+        "IP to assign to the host") do |v|
+    options[:ip] = v
+  end
+
+  op.on("-d", "--[no]dc-install",
+        "Should we install Design Center?") do |v|
+    options[:dcinstall] = v
+  end
+
+  op.on("-t", "--[no]dc-test",
+        "Should we test Design Center?  Enables --dc-install if enabled.") do |v|
+    options[:dcinstall] = v
+    options[:dctest] = v
+  end
+
+  op.on("-h", "--[no]hub",
+        "Should we set up as a hub?") do |v|
+    options[:provision_hub] = v
+  end
+
+  op.on("-c", "--[no]client",
+        "Should we set up as a client?") do |v|
+    options[:provision_client] = v
+  end
+
+end.parse!(ours)
+
+installers = { 
+  :core => 'install_core_community.sh',
+  :apt => 'install_apt_community.sh',
+  :v334 => 'install_3.3.4_community.sh',
+  :nova => 'install_2.2.3_nova.sh',
+  :enterprise => 'install_enterprise.sh',
+}
+
+installer = installers[options[:installer]]
+
+box_url = "#{options[:url]}#{options[:box].to_s}.box"
+
+# eat up the remaining arguments as sketch testing targets
+options[:targets] = ours
+
+options[:dctest] = options[:dcinstall] = true unless options[:targets].empty?
+
+print "CFEngine test environment ready!\n\n"
+pp options
+
+Vagrant::Config.run do |config|
+
+  config.vm.box = options[:box].to_s
+  config.vm.box_url = box_url
+
+  #### Define VMs ####
+
+  # First create the hub
+  config.vm.define :cftester do |hub_config|
+
+    # Host config
+    hub_config.vm.host_name = "cftester"
+    hub_config.vm.network :hostonly, options[:ip]
+    hub_config.vm.forward_port 80, 8080
+
+    if installer
+      # Install the CFE packages
+      hub_config.vm.provision :shell do |shell|
+        shell.path = installer
+      end
+    end
+
+    if options[:dcinstall]
+      hub_config.vm.provision :shell do |shell|
+        shell.path = "install_dc.sh"
+        shell.args = "#{dchome} #{options[:dcurl]} #{options[:dcbranch]}"
+      end
+    end
+
+    if options[:dctest]
+      hub_config.vm.provision :shell do |shell|
+        shell.path = "test_dc.sh"
+        shell.args = "#{dchome} #{options[:targets].join(' ')}"
+      end
+    end
+
+    # Run the CFEngine provisioner
+    if options[:provision_hub] || options[:provision_client]
+      hub_config.vm.provision CFEngineProvisioner do |cf3|
+        cf3.mode = :bootstrap
+        cf3.policy_server = "10.1.1.10"
+        cf3.install_cfengine = true
+        cf3.am_policy_hub = options[:provision_hub]
+      end
+    end
+
+  end
+
+  config.vm.define :splunks do |hub_config|
+
+    # Host config
+    hub_config.vm.host_name = "splunks"
+    hub_config.vm.network :hostonly, "10.1.2.10"
+    hub_config.vm.forward_port 80, 8210
+    hub_config.vm.forward_port 8000, 10210
+    hub_config.vm.forward_port 8089, 11210
+
+    hub_config.vm.provision :shell do |shell|
+      shell.path = "install_core_community.sh"
+    end
+
+    hub_config.vm.provision :shell do |shell|
+      shell.inline = "cd /vagrant/splunk; sudo /var/cfengine/bin/cf-agent -KI -f ./test.cf -Dservermode"
+    end
+  end
+
+  config.vm.define :splunkc do |hub_config|
+
+    # Host config
+    hub_config.vm.host_name = "splunkc"
+    hub_config.vm.network :hostonly, "10.1.2.11"
+    hub_config.vm.forward_port 80, 8211
+    hub_config.vm.forward_port 8000, 10211
+    hub_config.vm.forward_port 8089, 11211
+
+    hub_config.vm.provision :shell do |shell|
+      shell.path = "install_core_community.sh"
+    end
+
+    hub_config.vm.provision :shell do |shell|
+      shell.inline = "echo '10.1.2.10 splunks' >> /etc/hosts"
+    end
+
+    hub_config.vm.provision :shell do |shell|
+      shell.inline = "cd /vagrant/splunk; sudo /var/cfengine/bin/cf-agent -KI -f ./test.cf"
+    end
+  end
+end
+

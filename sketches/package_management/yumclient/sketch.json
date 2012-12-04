@@ -1,0 +1,27 @@
+{
+    "manifest":
+    {
+        "main.cf":     { "desc": "main file", "version": "1.0" },
+        "README.md":   { "documentation": true },
+        "test.cf":     { "comment": "Example policy" },
+        "changelog":     { "comment": "changelog" },
+        "params/demo.json": { "comment": "demo JSON parameters" }
+    },
+
+    "metadata":
+    {
+        "name": "Repository::Yum::Client",
+	"description": "Manage yum repo client configs in /etc/yum.repos.d",
+        "version": 1.10,
+        "license": "MIT",
+        "tags": [ "cfdc" ],
+        "authors": [ "Nick Anderson <nick@cmdln.org>", "Ted Zlatanov <tzz@lifelogs.com>" ],
+        "tested": [ "redhat_5", "centos_5" ],
+        "depends": { "CFEngine::stdlib": { "version": 105 },
+                     "cfengine": { "version": "3.4.0" },
+                     "os": [ "linux" ]
+                   }
+    },
+    "entry_point": "main.cf",
+    "interface": [ "main.cf" ]
+}

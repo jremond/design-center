@@ -1,0 +1,37 @@
+body common control
+{
+      bundlesequence => { "cfsketch_run" };
+      inputs => {
+                  "../../libraries/copbl/cfengine_stdlib.cf",
+                  "./main.cf",
+                };
+}
+
+
+bundle common cfsketch_g
+{
+      "test_sysctl_empty_first" expression => "!any";
+
+  vars:
+    !test::
+      "test_sysctl_sysctl_file" string => "/etc/sysctl.conf";
+    test::
+      "test_sysctl_sysctl_file" string => "/tmp/sysctl.conf";
+    any::
+      "test_sysctl_class_prefix" string => "default:test_sysctl_";
+      "test_sysctl_canon_prefix" string => "test_sysctl_";
+      "test_sysctl_ensured_kv[net.ipv4.tcp_tw_reuse]" string => "1";
+      "test_sysctl_removed_kv[net.ipv4.tcp_tw_reuse]" string => "2";
+      "test_sysctl_removed_vars" slist => { "bad.entry" };
+}
+
+bundle agent cfsketch_run
+{
+  methods:
+      "go" usebundle => cfdc_sysctl:set($(cfsketch_g.test_sysctl_class_prefix),
+                                        $(cfsketch_g.test_sysctl_canon_prefix),
+                                        $(cfsketch_g.test_sysctl_sysctl_file),
+                                        "default:cfsketch_g.test_sysctl_ensured_kv",
+                                        "default:cfsketch_g.test_sysctl_removed_kv",
+                                        @(cfsketch_g.test_sysctl_removed_vars));
+}

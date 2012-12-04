@@ -1,0 +1,111 @@
+body file control
+{
+      namespace => "cfdc_sysctl";
+}
+
+bundle agent set(class_prefix, canon_prefix, sysctl_file, ensured_kv, removed_kv, removed_vars)
+{
+  meta:
+      "vars[class_prefix][type]"      string => "NON_EMPTY_STRING";
+      "vars[class_prefix][default]"   string => "__CLASS_PREFIX__";
+
+      "vars[canon_prefix][type]"      string => "NON_EMPTY_STRING";
+      "vars[canon_prefix][default]"   string => "__CANON_PREFIX__";
+
+      "vars[empty_first][type]"       string => "CONTEXT";
+      "vars[empty_first][default]"    string => "!any";
+
+      "vars[sysctl_file][type]"       string => "PATH";
+      "vars[sysctl_file][default]"    string => "/etc/sysctl.conf";
+
+      "vars[ensured_kv][type]"        string => "ARRAY()";
+      "vars[removed_kv][type]"        string => "ARRAY()";
+      "vars[removed_vars][type]"      string => "LIST(NON_EMPTY_STRING)";
+
+  vars:
+      "sysctl_vars" slist => getindices("$(ensured_kv)");
+
+      "removed_kvindices" slist => getindices("$(removed_kv)");
+
+      # build the array of things to be removed
+      "removed[$(removed_vars)]"  string => ".*";
+      "removed[$(removed_kvindices)]" string => "$($(removed_kv)[$(removed_kvindices)])";
+
+    second_class_pass::
+      "removed_indices" slist => { getindices("cfdc_sysctl:set.removed") };
+
+  classes:
+      # We need to know if we are on the second pass
+      "second_class_pass" and => {"first_class_pass"};
+      "first_class_pass" and => {"any"};
+
+  files:
+    second_class_pass::
+      "$(sysctl_file)"
+      create => "true",
+      edit_line => default:set_variable_values("$(ensured_kv)"),
+      classes => default:if_repaired("$(canon_prefix)reload"),
+      ifvarclass => "!$(class_prefix)empty_first",
+      comment => "Only ensure specific defined values are present";
+
+      "$(sysctl_file)"
+      create => "true",
+      handle => "sysctl_files_empty_first",
+      edit_defaults => default:empty,
+      edit_line => default:set_variable_values("$(ensured_kv)"),
+      classes => default:if_repaired("$(canon_prefix)reload"),
+      ifvarclass => "$(class_prefix)empty_first",
+      comment => "Empty file before ensuring specified values are present,
+this effectively promises the full file content.";
+
+      "$(sysctl_file)"
+      create => "true",
+      edit_line => cfdc_sysctl:del_variable_values("cfdc_sysctl:set.removed"),
+      classes => default:if_repaired("$(canon_prefix)reload"),
+      comment => "Ensure the variables and values given do not exist at all.";
+
+  commands:
+      "/sbin/sysctl"
+      args => "-p",
+      classes => default:if_repaired("$(canon_prefix)reloaded"),
+      ifvarclass => "$(canon_prefix)reload",
+      comment => "Reload sysctl after repairing configuration";
+
+  reports:
+    second_class_pass.default:debug::
+      "DEBUG is turned on for sysctl";
+
+      "$(sysctl_file) will be emptied before editing",
+      ifvarclass => "$(class_prefix)empty_first";
+
+      "Set sysctl var: $(sysctl_vars)=$($(ensured_kv)[$(sysctl_vars)])";
+      "Remove sysctl var: $(removed_indices)=$(cfdc_sysctl:set.removed[$(removed_indices)])";
+      # "Removed vars: $(removed_indices)";
+
+      "I repaired $(sysctl_file), sysctl needs to be reloaded",
+      ifvarclass => "$(canon_prefix)reload";
+
+      "I successfully reloaded sysctl",
+      ifvarclass => "$(canon_prefix)reloaded";
+
+}
+
+bundle edit_line del_variable_values(v)
+{
+  vars:
+
+      "index" slist => getindices("$(v)");
+
+      # Be careful if the index string contains funny chars
+
+      "cindex[$(index)]" string => canonify("$(index)");
+
+  delete_lines:
+
+      "$(index)\s*=\s*$($(v)[$(index)])",
+      comment => "Delete a specific variable";
+
+  reports:
+    default:debug::
+      "DEBUG: we will delete lines matching: '$(index)\s*=\s*$($(v)[$(index)])'";
+}
