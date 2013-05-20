@@ -1,109 +1,120 @@
 #
 # info: obtain information about a sketch
 #
-# CFEngine AS, October 2012
+# CFEngine AS, May 2013
 
 use Term::ANSIColor qw(:constants);
 
 use Util;
-use DesignCenter::Config;
 
 ######################################################################
 
 %COMMANDS =
-  (
-   'info' =>
+ (
+  'info' =>
+  [
    [
-    [
-     'info [-v] REGEX | all',
-     'Show detailed information about sketches that match the regular expression, use "all" to show all the sketches. Use -v to show even more details (parameter information).',
-     '(?:(-v)\b\s*)?(\S*)',
-    ],
-   ]
-  );
+    'info [-v] REGEX | all',
+    'Show detailed information about sketches that match the regular expression, use "all" to show all the sketches. Use -v to show even more details (parameter information).',
+    '(?:(-v)\b\s*)?(\S*)',
+   ],
+  ]
+ );
 
 ######################################################################
 
-
 sub command_info {
-  my $full=shift;
-  my $regex=shift;
-  if ($regex eq '') {
-    Util::warning "No query specified. If you want to view all sketches, please specify 'all'\n";
-    return;
-  }
-  $regex = "." if ($regex eq 'all' or !$regex);
-  my $err = Util::check_regex($regex);
-  if ($err) {
-    Util::error($err);
-  } else {
-    my $res=DesignCenter::Config->_repository->search($regex);
-    my $installed=DesignCenter::Config->_system->list([$regex]);
-    my @res = sort keys %$res;
-    if (@res) {
-      my $id = 1;
-      print "The following sketches match your query:\n";
-      foreach my $found (@res) {
-        $res->{$found}->load;
-        $rec=$res->{$found}->metadata;
-        print "\n";
-        print BLUE."Sketch ".CYAN."$found\n".RESET;
-        print BLUE."Description: ".RESET.$rec->{description}."\n"
-          if $rec->{description};
-        print BLUE."Authors: ".RESET.join(", ", @{$rec->{authors}})."\n"
-          if $rec->{authors};
-        print BLUE."Version: ".RESET.$rec->{version}."\n"
-          if $rec->{version};
-        print BLUE."License: ".RESET.$rec->{license}."\n"
-          if $rec->{license};
-        print BLUE."Tags: ".RESET.join(", ", @{$rec->{tags}})."\n"
-          if $rec->{tags};
-# TODO: FIX dependency printing
-#        print BLUE."Dependencies: ".RESET.join(", ", map { $_->{value} } DesignCenter::JSON::recurse_print($rec->{depends}, undef, 1))."\n"
-#          if $rec->{depends};
-        print BLUE."Installed: ".RESET.(exists($installed->{$found}) ? "Yes, under ".$installed->{$found}->fulldir : "No")."\n";
-        print BLUE."Library: ".RESET."Yes\n" unless ($res->{$found}->entry_point);
-        if ($installed->{$found}) {
-          if ($res->{$found}->entry_point) {
-            my @activations = @{$installed->{$found}->_activations};
-            my $count = $installed->{$found}->num_instances;
-            print BLUE."Activated: ".RESET;
-            if ($count) {
-              print GREEN."Yes".RESET;
-              if ($count > 1) {
-                print ", $count instances";
-              }
-              print "\n";
-            } else {
-              print RED."No\n".RESET;
-            }
-          }
-        }
-        if ($full) {
-          if ($res->{$found}->entry_point) {
-            my $ep = DesignCenter::Sketch::verify_entry_point($found, $res->{$found}->json_data);
-            if ($ep && $ep->{varlist}) {
-              print BLUE."Parameters:\n".RESET;
-              for my $p (@{$ep->{varlist}}) {
-                next if $p->{name} =~ /^(prefix|class_prefix|canon_prefix)$/;
-                my $simple_type = $p->{type};
-                $simple_type =~ s/\n+/ /gs;
-                $simple_type =~ s/\s*:\s*/:/gs;
-                my $def = (DesignCenter::JSON::recurse_print($p->{default}, undef, 1))[0]->{value};
-                print BOLD BLUE."    $p->{name}".RESET.": $simple_type".($def ? " (default: $def)\n":"\n");
-              }
-            }
-          }
-        }
-        print RESET;
-        $id++;
-      }
-      Util::output("\nUse info -v to show the parameter information.\n") unless $full;
+    my $full=shift;
+    my $regex=shift;
+
+    $regex = "." if ($regex eq 'all' or !$regex);
+    my $err = Util::check_regex($regex);
+    if ($err)
+    {
+        Util::error($err);
     }
-    else {
-      Util::error("No installed sketches match your query. Maybe use 'search' instead?\n");
+    else
+    {
+        ($success, $result) = main::api_interaction({
+                                                     describe => 1,
+                                                     search => $regex,
+                                                    });
+        my $list = Util::hashref_search($result, 'data', 'search');
+        my $first = 1;
+        if (ref $list eq 'HASH')
+        {
+            # Get list of installed and activated sketches
+            my $installed = main::get_installed;
+            my $activs = main::get_activations;
+            # If we have multiple repos, include repo names in the results
+            my $multiple_repos = (keys %$list > 1);
+            foreach my $repo (sort keys %$list)
+            {
+                foreach my $sketch (sort keys %{$list->{$repo}})
+                {
+                    if ($first)
+                    {
+                        print "The following sketches match your query:\n";
+                        $first = undef;
+                    }
+                    my $meta = Util::hashref_search($list->{$repo}->{$sketch}, qw/metadata/);
+                    my $api = Util::hashref_search($list->{$repo}->{$sketch}, qw/api/);
+                    print "\n";
+                    print BLUE."Sketch ".CYAN."$sketch\n".RESET;
+                    print BLUE."Description: ".RESET.$meta->{description}."\n"
+                     if $meta->{description};
+                    print BLUE."Authors: ".RESET.join(", ", @{$meta->{authors}})."\n"
+                     if $meta->{authors};
+                    print BLUE."Version: ".RESET.$meta->{version}."\n"
+                     if $meta->{version};
+                    print BLUE."License: ".RESET.$meta->{license}."\n"
+                     if $meta->{license};
+                    print BLUE."Tags: ".RESET.join(", ", @{$meta->{tags}})."\n"
+                     if $meta->{tags};
+                    print BLUE."Installed: ".RESET.(exists($installed->{$sketch}) ? "Yes, under ".$installed->{$sketch} : "No")."\n";
+                    print BLUE."Library: ".RESET."Yes\n" unless scalar(keys %$api);
+                    if (scalar(keys %$api))
+                    {
+                        my $num_act = scalar(@{$activs->{$sketch}});
+                        my $word = $num_act > 1 ? "instances" : "instance";
+                        print BLUE."Activated: ".RESET.($num_act ? "Yes, $num_act $word" : "No")."\n";
+                    }
+                    if ($full && scalar(keys %$api))
+                    {
+                        print BLUE."Parameters:\n".RESET;
+                        foreach my $bundle (sort keys %$api)
+                        {
+                            print "  For bundle ".CYAN.$bundle.RESET."\n";
+                            foreach my $p (@{$api->{$bundle}})
+                            {
+                                print YELLOW."    ".$p->{name}.RESET.": ".$p->{type}."\n"
+                                 unless $p->{type} =~ /^(metadata|environment)$/;
+                            }
+                        }
+                    }
+                }
+            }
+            Util::output("\nUse info -v to show the parameter information.\n") unless $full;
+        }
+        else
+        {
+            Util::error("Internal error: The API 'search' command returned an unknown data structure.");
+        }
     }
-  }
 }
+
+# # TODO: FIX dependency printing
+# #        print BLUE."Dependencies: ".RESET.join(", ", map { $_->{value} } DesignCenter::JSON::recurse_print($rec->{depends}, undef, 1))."\n"
+# #          if $rec->{depends};
+#         print RESET;
+#         $id++;
+#       }
+#       Util::output("\nUse info -v to show the parameter information.\n") unless $full;
+#     }
+#     else {
+#       Util::error("No installed sketches match your query. Maybe use 'search' instead?\n");
+#     }
+#   }
+# }
 
 1;

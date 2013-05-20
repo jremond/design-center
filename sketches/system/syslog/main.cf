@@ -1,0 +1,47 @@
+body file control
+{
+      namespace => "cfdc_syslog";
+}
+
+bundle agent ensure(runenv,metadata,conf_file,config)
+{
+  methods:
+      "utils" usebundle => default:eu($(runenv));
+
+    verbose::
+      "metadata" usebundle => default:report_metadata($(this.bundle), $(metadata)),
+      inherit => "true";
+
+  files:
+      "$(default:eu.path_prefix)$(conf_file)"
+      create => "true",
+      edit_defaults => default:empty,
+      classes => default:if_repaired("syslog_config_repaired"),
+      edit_line => system_syslog_edit_config("$(config)");
+
+  processes:
+    !syslog_config_repaired::
+      ".*/syslogd"
+      restart_class => "syslog_proc_start";
+
+  commands:
+    syslog_config_repaired.(sunos_5_8|sunos_5_9)::
+      "$(default:eu.exec_prefix)/etc/init.d/syslog stop && $(default:eu.exec_prefix)/etc/init.d/syslog start"
+      contain => default:in_shell;
+    syslog_config_repaired.(sunos_5_10|sunos_5_11)::
+      "$(default:eu.exec_prefix)/usr/sbin/svcadm restart svc:/network/ntp:default";
+    syslog_proc_start.(sunos_5_8|sunos_5_9)::
+      "$(default:eu.exec_prefix)/etc/init.d/syslog start";
+    syslog_proc_start.(sunos_5_10|sunos_5_11)::
+      "$(default:eu.exec_prefix)/usr/sbin/svcadm enable svc:/network/ntp:default";
+}
+
+bundle edit_line system_syslog_edit_config(c)
+{
+  vars:
+      "selectors" slist => getindices("$(c)");
+
+  insert_lines:
+      "# This file is managed by CFEngine. Local changes will be overwritten";
+      "$(selectors)$($(c)[$(selectors)][action])";
+}

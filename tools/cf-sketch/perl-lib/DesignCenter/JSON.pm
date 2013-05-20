@@ -4,7 +4,7 @@
 # DC-specific JSON stuff
 #
 # CFEngine AS, October 2012.
-# Time-stamp: <2012-10-09 23:30:56 a10022>
+# Time-stamp: <2013-05-09 23:57:00 a10022>
 
 package DesignCenter::JSON;
 
@@ -34,7 +34,17 @@ sub load
 
     my @j;
 
-    if (Util::is_resource_local($f))
+    my $try_eval;
+    eval
+    {
+     $try_eval = $coder->decode($f);
+    };
+
+    if ($try_eval) # detect inline content, must be proper JSON
+    {
+     @j = split "\n", $f;
+    }
+    elsif (Util::is_resource_local($f))
     {
         my $j;
         unless (open($j, '<', $f) && $j)
@@ -189,7 +199,48 @@ sub pretty_print {
 
 sub pretty_print_json
 {
- return $canonical_coder->pretty()->encode(shift);
+    my $json = shift;
+    my $indent = shift || "";
+    my $res = $canonical_coder->pretty()->encode($json);
+    $res =~ s/^/$indent/gm;
+    return $res;
+}
+
+sub hashref_search
+{
+ my $ref = shift @_;
+ my $k = shift @_;
+ if (ref $ref eq 'HASH' && exists $ref->{$k})
+ {
+  if (scalar @_ > 0) # dig further
+  {
+   return hashref_search($ref->{$k}, @_);
+  }
+  else
+  {
+   return $ref->{$k};
+  }
+ }
+
+ if (ref $ref eq 'ARRAY' && ref $k eq 'HASH') # search an array
+ {
+  foreach my $item (@$ref)
+  {
+   foreach my $probe (keys %$k)
+   {
+    if (ref $item eq 'HASH' &&
+        exists $item->{$probe})
+    {
+     # if the value is undef...
+     return $item unless defined $k->{$probe};
+     # or it matches the probe
+     return $item if $item->{$probe} eq $k->{$probe};
+    }
+   }
+  }
+ }
+
+ return undef;
 }
 
 1;
